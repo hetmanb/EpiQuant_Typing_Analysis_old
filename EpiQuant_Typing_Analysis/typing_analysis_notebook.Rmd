@@ -1,0 +1,430 @@
+---
+title: "EpiQuant Typing Analysis"
+output: html_notebook
+---
+
+### Introduction
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. You can download the RMarkdown file from the top-right, or simply load this into [RStudio](http://www.rstudio.com). 
+
+
+
+### Loading Packages
+
+First, lets go ahead and use a function that will load the packages that we'll need, and install them if they're not currently installed. 
+```{r}
+usePackage<-function(p){
+  # load a package if installed, else load after installation.
+  # Args:
+  #   p: package name in quotes
+  if (!is.element(p, installed.packages()[,1])){
+    print(paste('Package:',p,'Not found, Installing Now...'))
+    install.packages(p, dep = TRUE, repos = "http://cran.us.r-project.org")}
+  suppressMessages(require(p, character.only = TRUE))
+  print(paste0(p, " loaded."))
+}
+
+
+usePackage("xlsx")
+usePackage("reshape2")
+usePackage("plyr")
+usePackage("grid")
+usePackage("gridExtra")
+usePackage("ggplot2")
+usePackage("RColorBrewer")
+usePackage("gplots")
+usePackage("readr")
+```
+
+### Analysis 1: Generating the *EpiMatrix*
+
+Now, we'll start by loading in a couple different data files: 
+
+
+1. [**source_pw**](https://www.dropbox.com/s/ukwd5nn3rtr2p3e/Pairwise_Source.txt?dl=1) - This file contains the pairwise source similarities generated at the [EpiQuant Webserver](https://hetmanb.shinyapps.io/EpiQuant/)
+2. [**strain_data**](https://www.dropbox.com/s/z753x82zqri4mrs/Can654_straindata.txt?dl=1) - This file comes from your own data, see below to look at the structure of the file, it needs to be followed precisely for the following scripts to work.  
+
+
+```{r, fig.height=12, fig.width=12}
+source("helpers/epi-helper.R")
+
+source_pw <- read.table("Pairwise_Source.txt", header = T, sep = '\t')
+strain_data <- read.table("Can654_straindata.txt", header = T, sep = '\t')
+
+
+# Coefficients for source, temporal and geospatial components of the EpiQuant Model: combination of these should add to 1.0
+sigma <- 0.5 #source
+tau <- 0.3 #temporal   
+gamma <- 0.2 #geo 
+
+
+epi.table <- EpiTable(strain_data, source_pw, geog_calc(strain_data), temp_calc(strain_data), sigma, tau, gamma)  
+epi.matrix <- EpiMatrix(epi.table)
+
+EpiHeatmap_pdf(epi.matrix)
+
+```
+
+
+### Analysis 2: Assessing the Concordance between Epi- and Typing Results
+
+Now that we've generated the EpiMatrix file - we can use this to assess the epi-signal from clustered typing data.
+
+To do this, we'll require an additional file containing the cluster memberships for each method to be tested.
+
+**Here's what the typing-data should look like:**  
+```{r}
+
+typing.data <- read.table("Can654_typingdata_NA.txt", header = T, sep = '\t', row.names = 1, check.names = F)
+head(typing.data)
+
+```
+
+As you can see here that we've got our strain names in rows, and each column represents the fingerprint or sequence type that each strain belongs to. 
+**Next,** we'll want to actually perform the Epidemiologic Cluster Cohesion measurement for each of the typing clusters, and output that to a human-readable file. 
+
+
+```{r}
+source("helpers/ECC-helper.R")
+
+epi_cohesion_calc(typing.data, epi.matrix)
+
+# Lets go ahead and save this to an excel file:
+
+ outfile.name <- "ECC_Results(50.30.20).xlsx"
+
+ for(i in 1:length(cut_details)){
+   write.xlsx(cut_details[[i]], outfile.name, append = T, sheetName = colnames(typing.data)[i], col.names = T, row.names = F, showNA = T)
+ }
+```
+
+
+Our ECC calculator actually saves a global variable called "cut_details" -- lets have a look at some of the CGF cluster data from this now:
+  
+```{r}
+head(cut_details$CGF)
+```
+
+The above shows the ECC for each of the CGF Clusters, as well as the "Weighted" version of the data, based upon cluster size - and the members of each CGF Cluster. Now, we have our ECC Analysis results written to a nice Excel file, and can use these results to generate nice plots etc in Excel.. but why would we want to do that when we have the power of **R** at our fingertips!?  
+
+
+#### Comparison of ECC for different resolution methods: 
+
+Ok, so we've computed the ECC of isolates from our dataset pertaining to how they're clustered together using:  
+
+1. Clonal Complex (i.e. 4/7 housekeeping genes - allelic variation)
+2. MLST (7 houskeeping genes - allelic variation)
+3. CGF (40 Accessory genes - presence/absence)
+
+Our first hypothesis from this data was that *higher resolution methods generate clusters more specific to the underlying epidemiology.*  
+In other words, higher resolution --> smaller clusters containing isolates more highly related to one another --> this increased specificity *should* translate to increased *epidemiological* specificity too, *right?*
+
+Let's take a look. Here we're plotting the largest CC from our dataset, and mapping out the clusters generated via MLST and CGF from them. 
+
+
+```{r, fig.height=8, fig.width=11}
+source("helpers/plot_theme.R")
+df2 <- read.table("~/Dropbox/0 - Publications_bh/2016_03 EpiQuant Manuscript/EpiQuant_Analysis_2/Can654/cgf_source_vs_temp/ECC_med_results(balanced)_NA.txt", sep = '\t', header = T)
+palette <- brewer.pal(8, "Dark2")
+
+bubbleplot <- ggplot(df2[df2$CC_Cluster.size > 18,], aes(x = CC_Cluster.size, y = CC_IEC, size = CC_Cluster.size)) +  
+  geom_point(fill = palette[5], pch = 21, colour = "black") +
+  geom_point(colour = "black", pch = 21, data = df2[df2$CC_Cluster.size > 18,], aes(x = MLST_Cluster.size, y = MLST_IEC, size = MLST_Cluster.size),fill = palette[3]) + 
+  geom_point(colour = "black", pch = 21, data = df2[df2$CC_Cluster.size > 18,], aes(x = CGF_Cluster.size, y = CGF_IEC, size = CGF_Cluster.size), fill = palette[2]) +
+  scale_size(range = c(1, 20)) +  facet_wrap(~CC_ST) + plot_theme() + xlab("(Log10) Cluster Size") + ylab("Epidemiologic Cluster Cohesion") + 
+  theme(legend.position = 'right') + scale_x_continuous(trans = "log10")
+plot(bubbleplot)
+
+```
+
+  
+Looks pretty good: clusters from CGF and MLST are generally smaller, and often show much higher concordance to the underlying epidemiology. 
+
+Couple points to consider: 
+
+
+1) Some isolates are forced into singleton clusters when assessed via CGF or MLST therefore not included in the analysis. 
+
+```{r}
+
+typing.data_ns <- subset(typing.data, duplicated(CC) | duplicated(CC, fromLast = T))
+
+typing.data_ns <- subset(typing.data_ns, duplicated(ST) | duplicated(ST, fromLast = T))
+
+typing.data_ns <- subset(typing.data_ns, duplicated(CGF) | duplicated(CGF, fromLast = T))
+
+
+
+
+
+epi_cohesion_calc(typing.data, epi.matrix)
+
+# Lets go ahead and save this to an excel file:
+
+outfile.name <- "ECC_Results.xlsx"
+
+for(i in 1:length(cut_details)){
+  write.xlsx(cut_details[[i]], outfile.name, append = T, sheetName = colnames(typing.data)[i], col.names = T, row.names = F, showNA = T)
+}
+
+
+
+
+```
+
+#### ECC Cluster Analysis for CGF:  
+
+
+OK - So we're now able to generate ECC values for any type of clustered strain data. What we wanted to test next, was if there was a *variation* in the epidemiological concordance of a typing method depending on what facet of the epidemiologic calculation we were emphasizing. In other words, for a given method (e.g. CGF) do the ECC results change significantly if we focus on **source,** **temporal** or **geospatial** components of the model?     
+
+
+As **geospatial** data was limited, we employed two different sets of coefficients to test this idea: 
+
+1. *sigma*(0.5) : *tau*(0.3) : *gamma*(0.2) **Balanced**
+2. *sigma*(0.8) : *tau*(0.1) : *gamma*(0.1) **Source Emphasis**
+3. *sigma*(0.1) : *tau*(0.8) : *gamma*(0.1) **Temporal Emphasis**
+
+
+To retrieve the ECC for each cluster from each set of epi-coefficients, I ran the EpiMatrix and ECC analysis twice, one for each set of coefficients. I then copy and pasted the results side-by-side into a text file that looks like the following: 
+
+```{r}
+
+cgf <- read.table("CGF_ECC_data(Source_Temp_Balanced).txt", header = T, sep = '\t')
+head(cgf) # Have a look at what our data looks like
+```
+
+Since we've got our CGF data organized now, lets try looking at the distribution of ECC values for each of the CGF fingerprints:   
+
+```{r, fig.height=7, fig.width=11}
+### Boxplot of the total distribution of source vs temporal favoured ECC:
+
+
+# Grab the CGF data from the ECC analysis data of the different typing systems
+box_data <- cgf[cgf$Cluster_size > 3 , c(1, 3, 4, 5)]
+
+# Convert it to long format
+cgf_box <- melt(box_data, id.vars = "CGF_Subtype")
+
+# Rename the variables to make more sense
+cgf_box$variable <- gsub("ECC_80_10_10", "Source", cgf_box$variable)
+cgf_box$variable <- gsub("ECC_10_80_10", "Temporal", cgf_box$variable)
+cgf_box$variable <- gsub("ECC_50_30_20", "Balanced", cgf_box$variable)
+# Calculate the Quartiles to be able to identify the outlier clusters
+cgf_box <- ddply(cgf_box, .(variable), mutate, Q1=quantile(value, 1/4), 
+                   Q3=quantile(value, 3/4), IQR=Q3-Q1, upper.limit=Q3+1.5*IQR, lower.limit=Q1-1.5*IQR)
+
+# Plot the boxplot data using ggplot
+box_cgf <- ggplot(cgf_box, aes(x = variable, y = value, fill = variable)) + plot_theme() +
+  geom_boxplot(outlier.colour = NULL, outlier.size = 1, show.legend = F, varwidth = T) + # we'll fill in the outlier colors manually 
+  scale_fill_manual(values = c("Source" = "grey50", "Temporal" = "grey90", "Balanced" = "grey95")) + # color the boxes
+  geom_point(data = cgf_box[cgf_box$value > cgf_box$upper.limit,], aes(x = variable, y = value, col = variable, shape = variable), size = 3) + # plot the outliers using geom_point 
+  theme(legend.position = "none") + # no legend
+  scale_colour_manual(values = c("Source" = "#d95f02", "Temporal" = "#4dac26", "Balanced" = "#010101")) + 
+  scale_shape_manual(values = c("Source" = 16, "Temporal" = 17, "Balanced" = 18)) + # circles and triangles and diamonds
+  labs(y = "Epidemiologic Cluster Cohesion", x = "ECC Emphasis") +
+  theme(plot.margin = unit(c(.65, .5, 2.4, .5), "cm"))
+
+plot(box_cgf)
+
+
+### Plot 2: 
+# Set up the data for plotting individual cluster results
+cgf_outdata <- cgf[cgf$Cluster_size > 3,]
+
+# Dummy negative values for source and temporal outliers
+cgf_outdata$source_sig <- 0
+cgf_outdata$temp_sig <- 2
+cgf_outdata$balanced_sig <- 4
+
+
+# Change 0 to 1 if outlier source, change 2 to 3 if outlier temporal
+outlier_source <- (IQR(cgf_outdata$ECC_80_10_10, na.rm = T) * 1.5) + quantile(cgf_outdata$ECC_80_10_10, na.rm = T)[4] 
+outlier_temp <- (IQR(cgf_outdata$ECC_10_80_10, na.rm = T) * 1.5) + quantile(cgf_outdata$ECC_10_80_10, na.rm = T)[4] 
+outlier_balanced <- (IQR(cgf_outdata$ECC_50_30_20, na.rm = T) * 1.5) + quantile(cgf_outdata$ECC_50_30_20, na.rm = T)[4] 
+
+cgf_outdata$source_sig[which(cgf_outdata$ECC_80_10_10 > outlier_source)] <- 1
+cgf_outdata$temp_sig[which(cgf_outdata$ECC_10_80_10 > outlier_temp)] <- 3
+cgf_outdata$balanced_sig[which(cgf_outdata$ECC_50_30_20 > outlier_balanced)] <- 5
+
+
+# Plot the source and temporal ECC with the identified "outliers" as orange and green shapes instead of grey:
+p_cgf <- ggplot(cgf_outdata, aes(x = CGF_Subtype, y = ECC_80_10_10, fill = as.character(source_sig))) + fte_theme() +
+  geom_point(size = 3, shape = 21) + theme(axis.text.x  = element_text(angle=90, vjust = 0.5)) + 
+  geom_point(size = 3, shape = 24, aes(x = CGF_Subtype, y = ECC_10_80_10, fill = as.character(temp_sig))) +
+  geom_point(size = 3, shape = 23, aes(x = CGF_Subtype, y = ECC_50_30_20, fill = as.character(balanced_sig))) +
+  labs(y = "", title = '', x = 'CGF Subtype') + theme(legend.position = "none") +
+  scale_y_continuous(limit = c(0, 1)) + scale_fill_manual(values = c("0" = "grey50","1" = "#d95f02", "2" = "grey90", "3" = "#4dac26", "4" = "grey95", "5" = "#010101"))
+
+# Combine both plots into a single Figure: 
+cgf_multiplot <- grid.arrange(box_cgf, p_cgf, ncol = 2, widths = c(5, 15))
+
+
+```
+
+Pretty cool! It looks like the CGF data provides higher association to **Source** compared to **Temporal** associations. 
+
+
+
+Now lets try the same thing for MLST Results: 
+
+
+```{r}
+# cgf <- read.table("~/Desktop/cgf_sourcevstemp.txt", header = T, sep = '\t')
+mlst <- read.table("MLST_ECC_data(Source_Temp_Balanced).txt", header = T, sep = '\t')
+head(mlst) # Have a look at what our data looks like
+```
+
+Since we've got our CGF data organized now, lets try looking at the distribution of ECC values for each of the CGF fingerprints:   
+
+```{r, fig.height=7, fig.width=11}
+### Boxplot of the total distribution of source vs temporal favoured ECC:
+
+
+# Grab the CGF data from the ECC analysis data of the different typing systems
+box_data <- mlst[mlst$Cluster_Size > 3 , c(1, 3, 4, 5)]
+
+# Convert it to long format
+mlst_box <- melt(box_data, id.vars = "MLST_ST")
+
+# Rename the variables to make more sense
+mlst_box$variable <- gsub("ECC_80_10_10", "Source", mlst_box$variable)
+mlst_box$variable <- gsub("ECC_10_80_10", "Temporal", mlst_box$variable)
+mlst_box$variable <- gsub("ECC_50_30_20", "Balanced", mlst_box$variable)
+# Calculate the Quartiles to be able to identify the outlier clusters
+mlst_box <- ddply(mlst_box, .(variable), mutate, Q1=quantile(value, 1/4), 
+                   Q3=quantile(value, 3/4), IQR=Q3-Q1, upper.limit=Q3+1.5*IQR, lower.limit=Q1-1.5*IQR)
+
+# Plot the boxplot data using ggplot
+box_mlst <- ggplot(mlst_box, aes(x = variable, y = value, fill = variable)) + fte_theme() +
+  geom_boxplot(outlier.colour = NULL, outlier.size = 1, show.legend = F, varwidth = T) + # we'll fill in the outlier colors manually 
+  scale_fill_manual(values = c("Source" = "grey50", "Temporal" = "grey90", "Balanced" = "grey95")) + # color the boxes
+  geom_point(data = mlst_box[mlst_box$value > mlst_box$upper.limit,], aes(x = variable, y = value, col = variable, shape = variable), size = 3) + # plot the outliers using geom_point 
+  theme(legend.position = "none") + # no legend
+  scale_colour_manual(values = c("Source" = "#d95f02", "Temporal" = "#4dac26", "Balanced" = "#010101")) + 
+  scale_shape_manual(values = c("Source" = 16, "Temporal" = 17, "Balanced" = 18)) + # circles and triangles and diamonds
+  labs(y = "Epidemiologic Cluster Cohesion", x = "ECC Emphasis") +
+  theme(plot.margin = unit(c(.65, .5, 2.4, .5), "cm"))
+
+plot(box_mlst)
+
+
+### Plot 2: 
+# Set up the data for plotting individual cluster results
+mlst_outdata <- mlst[mlst$Cluster_Size > 3,]
+
+# Dummy negative values for source and temporal outliers
+mlst_outdata$source_sig <- 0
+mlst_outdata$temp_sig <- 2
+mlst_outdata$balanced_sig <- 4
+
+
+# Change 0 to 1 if outlier source, change 2 to 3 if outlier temporal
+outlier_source <- (IQR(mlst_outdata$ECC_80_10_10, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_80_10_10, na.rm = T)[4] 
+outlier_temp <- (IQR(mlst_outdata$ECC_10_80_10, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_10_80_10, na.rm = T)[4] 
+outlier_balanced <- (IQR(mlst_outdata$ECC_50_30_20, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_50_30_20, na.rm = T)[4] 
+
+mlst_outdata$source_sig[which(mlst_outdata$ECC_80_10_10 > outlier_source)] <- 1
+mlst_outdata$temp_sig[which(mlst_outdata$ECC_10_80_10 > outlier_temp)] <- 3
+mlst_outdata$balanced_sig[which(mlst_outdata$ECC_50_30_20 > outlier_balanced)] <- 5
+
+
+# Plot the source and temporal ECC with the identified "outliers" as orange and green shapes instead of grey:
+p_mlst <- ggplot(mlst_outdata, aes(x = MLST_ST, y = ECC_80_10_10, fill = as.character(source_sig))) + fte_theme() +
+  geom_point(size = 3, shape = 21) + theme(axis.text.x  = element_text(angle=90, vjust = 0.5)) + 
+  geom_point(size = 3, shape = 24, aes(x = MLST_ST, y = ECC_10_80_10, fill = as.character(temp_sig))) +
+  geom_point(size = 3, shape = 23, aes(x = MLST_ST, y = ECC_50_30_20, fill = as.character(balanced_sig))) +
+  labs(y = "", title = '', x = 'MLST ST') + theme(legend.position = "none") +
+  scale_y_continuous(limit = c(0, 1)) + scale_fill_manual(values = c("0" = "grey50","1" = "#d95f02", "2" = "grey90", "3" = "#4dac26", "4" = "grey95", "5" = "#010101"))
+
+# Combine both plots into a single Figure: 
+mlst_multiplot <- grid.arrange(box_mlst, p_mlst, ncol = 2, widths = c(5, 15))
+
+
+```
+
+
+#### Descriptive Statistics for Subtype Clusters and ∆E: 
+
+
+```{r}
+
+# load our table
+epi_subtype_match <- suppressMessages(read_tsv("can654.epi(50_30_20).subtype.matching.txt"))
+
+# save the non redundant data (i.e. no "same-same" isolate name matches) 
+  mydata <- as.data.frame(epi_subtype_match)
+  mydata_nr <- mydata[-which(mydata[,1]==mydata[,2]),]
+  
+# calculate the average ∆E for isolates in the same clustersfor each method   
+paste0("Mean (1-∆E) for pairs of isolates in the same CGF Clusters = ", 
+      round(1 - mean(mydata_nr[which(mydata_nr$CGF1 == mydata_nr$CGF2), "value"]), 4), 
+      ", MLST = ",
+      round(1 - mean(mydata_nr[which(mydata_nr$MLST1 == mydata_nr$MLST2), "value"]), 4),
+      ", CC = ",
+      round(1 - mean(mydata_nr[which(mydata_nr$CC1 == mydata_nr$CC2), "value"]), 4) 
+)
+
+# for isolates NOT in the same clusters for each method
+paste0("Mean (1-∆E) for pairs of isolates NOT in the same CGF Clusters = ", 
+      round(1 - mean(mydata_nr[which(mydata_nr$CGF1 != mydata_nr$CGF2), "value"]), 4), 
+      ", MLST = ",
+      round(1 - mean(mydata_nr[which(mydata_nr$MLST1 != mydata_nr$MLST2), "value"]), 4), 
+      ", CC = ",
+      round(1 - mean(mydata_nr[which(mydata_nr$CC1 != mydata_nr$CC2), "value"]), 4) 
+)
+
+# and finally for all isolates regardless of clustering
+paste0("Average PW (1-∆E) for the entire dataset = ",
+       round(1 - mean(mydata_nr[, "value"]), 4)
+       )
+
+
+# Avg ∆E for each cluster:
+n <- 0
+CC_Cluster.data <- list()
+for(i in unique(mydata_nr$CC1)){
+  n <- n+1
+  x <- mydata_nr$value[(mydata_nr$CC1 == i) & (mydata_nr$CC2 == i)]
+  CC_Cluster.data$ClusterName[n] <- paste0("CC-",i)
+  CC_Cluster.data$MeanESym[n] <- 1-mean(x)  
+  CC_Cluster.data$Length[n] <- length(x)
+  }
+
+n <- 0
+MLST_Cluster.data <- list()
+for(i in unique(mydata_nr$MLST1)){
+  n <- n+1
+  x <- mydata_nr$value[(mydata_nr$MLST1 == i) & (mydata_nr$MLST2 == i)]
+  MLST_Cluster.data$ClusterName[n] <- paste0("ST-",i)
+  MLST_Cluster.data$MeanESym[n] <- 1-mean(x)
+  MLST_Cluster.data$Length[n] <- length(x)
+  }
+
+n <- 0
+CGF_Cluster.data <- list()
+for(i in unique(mydata_nr$CGF1)){
+  n <- n+1
+  x <- mydata_nr$value[(mydata_nr$CGF1 == i) & (mydata_nr$CGF2 == i)]
+  CGF_Cluster.data$ClusterName[n] <- paste0("CGF-",i)
+  CGF_Cluster.data$MeanESym[n] <- 1-mean(x)
+  CGF_Cluster.data$Length[n] <- length(x)
+}
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
