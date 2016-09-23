@@ -138,40 +138,6 @@ plot(bubbleplot)
 ```
 
   
-Looks pretty good: clusters from CGF and MLST are generally smaller, and often show much higher concordance to the underlying epidemiology. 
-
-Couple points to consider: 
-
-
-1) Some isolates are forced into singleton clusters when assessed via CGF or MLST therefore not included in the analysis. 
-
-```{r}
-
-typing.data_ns <- subset(typing.data, duplicated(CC) | duplicated(CC, fromLast = T))
-
-typing.data_ns <- subset(typing.data_ns, duplicated(ST) | duplicated(ST, fromLast = T))
-
-typing.data_ns <- subset(typing.data_ns, duplicated(CGF) | duplicated(CGF, fromLast = T))
-
-
-
-
-
-epi_cohesion_calc(typing.data, epi.matrix)
-
-# Lets go ahead and save this to an excel file:
-
-outfile.name <- "ECC_Results.xlsx"
-
-for(i in 1:length(cut_details)){
-  write.xlsx(cut_details[[i]], outfile.name, append = T, sheetName = colnames(typing.data)[i], col.names = T, row.names = F, showNA = T)
-}
-
-
-
-
-```
-
 #### ECC Cluster Analysis for CGF:  
 
 
@@ -248,7 +214,7 @@ cgf_outdata$balanced_sig[which(cgf_outdata$ECC_50_30_20 > outlier_balanced)] <- 
 
 
 # Plot the source and temporal ECC with the identified "outliers" as orange and green shapes instead of grey:
-p_cgf <- ggplot(cgf_outdata, aes(x = CGF_Subtype, y = ECC_80_10_10, fill = as.character(source_sig))) + fte_theme() +
+p_cgf <- ggplot(cgf_outdata, aes(x = CGF_Subtype, y = ECC_80_10_10, fill = as.character(source_sig))) + plot_theme() +
   geom_point(size = 3, shape = 21) + theme(axis.text.x  = element_text(angle=90, vjust = 0.5)) + 
   geom_point(size = 3, shape = 24, aes(x = CGF_Subtype, y = ECC_10_80_10, fill = as.character(temp_sig))) +
   geom_point(size = 3, shape = 23, aes(x = CGF_Subtype, y = ECC_50_30_20, fill = as.character(balanced_sig))) +
@@ -263,84 +229,6 @@ cgf_multiplot <- grid.arrange(box_cgf, p_cgf, ncol = 2, widths = c(5, 15))
 
 Pretty cool! It looks like the CGF data provides higher association to **Source** compared to **Temporal** associations. 
 
-
-
-Now lets try the same thing for MLST Results: 
-
-
-```{r}
-# cgf <- read.table("~/Desktop/cgf_sourcevstemp.txt", header = T, sep = '\t')
-mlst <- read.table("MLST_ECC_data(Source_Temp_Balanced).txt", header = T, sep = '\t')
-head(mlst) # Have a look at what our data looks like
-```
-
-Since we've got our CGF data organized now, lets try looking at the distribution of ECC values for each of the CGF fingerprints:   
-
-```{r, fig.height=7, fig.width=11}
-### Boxplot of the total distribution of source vs temporal favoured ECC:
-
-
-# Grab the CGF data from the ECC analysis data of the different typing systems
-box_data <- mlst[mlst$Cluster_Size > 3 , c(1, 3, 4, 5)]
-
-# Convert it to long format
-mlst_box <- melt(box_data, id.vars = "MLST_ST")
-
-# Rename the variables to make more sense
-mlst_box$variable <- gsub("ECC_80_10_10", "Source", mlst_box$variable)
-mlst_box$variable <- gsub("ECC_10_80_10", "Temporal", mlst_box$variable)
-mlst_box$variable <- gsub("ECC_50_30_20", "Balanced", mlst_box$variable)
-# Calculate the Quartiles to be able to identify the outlier clusters
-mlst_box <- ddply(mlst_box, .(variable), mutate, Q1=quantile(value, 1/4), 
-                   Q3=quantile(value, 3/4), IQR=Q3-Q1, upper.limit=Q3+1.5*IQR, lower.limit=Q1-1.5*IQR)
-
-# Plot the boxplot data using ggplot
-box_mlst <- ggplot(mlst_box, aes(x = variable, y = value, fill = variable)) + fte_theme() +
-  geom_boxplot(outlier.colour = NULL, outlier.size = 1, show.legend = F, varwidth = T) + # we'll fill in the outlier colors manually 
-  scale_fill_manual(values = c("Source" = "grey50", "Temporal" = "grey90", "Balanced" = "grey95")) + # color the boxes
-  geom_point(data = mlst_box[mlst_box$value > mlst_box$upper.limit,], aes(x = variable, y = value, col = variable, shape = variable), size = 3) + # plot the outliers using geom_point 
-  theme(legend.position = "none") + # no legend
-  scale_colour_manual(values = c("Source" = "#d95f02", "Temporal" = "#4dac26", "Balanced" = "#010101")) + 
-  scale_shape_manual(values = c("Source" = 16, "Temporal" = 17, "Balanced" = 18)) + # circles and triangles and diamonds
-  labs(y = "Epidemiologic Cluster Cohesion", x = "ECC Emphasis") +
-  theme(plot.margin = unit(c(.65, .5, 2.4, .5), "cm"))
-
-plot(box_mlst)
-
-
-### Plot 2: 
-# Set up the data for plotting individual cluster results
-mlst_outdata <- mlst[mlst$Cluster_Size > 3,]
-
-# Dummy negative values for source and temporal outliers
-mlst_outdata$source_sig <- 0
-mlst_outdata$temp_sig <- 2
-mlst_outdata$balanced_sig <- 4
-
-
-# Change 0 to 1 if outlier source, change 2 to 3 if outlier temporal
-outlier_source <- (IQR(mlst_outdata$ECC_80_10_10, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_80_10_10, na.rm = T)[4] 
-outlier_temp <- (IQR(mlst_outdata$ECC_10_80_10, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_10_80_10, na.rm = T)[4] 
-outlier_balanced <- (IQR(mlst_outdata$ECC_50_30_20, na.rm = T) * 1.5) + quantile(mlst_outdata$ECC_50_30_20, na.rm = T)[4] 
-
-mlst_outdata$source_sig[which(mlst_outdata$ECC_80_10_10 > outlier_source)] <- 1
-mlst_outdata$temp_sig[which(mlst_outdata$ECC_10_80_10 > outlier_temp)] <- 3
-mlst_outdata$balanced_sig[which(mlst_outdata$ECC_50_30_20 > outlier_balanced)] <- 5
-
-
-# Plot the source and temporal ECC with the identified "outliers" as orange and green shapes instead of grey:
-p_mlst <- ggplot(mlst_outdata, aes(x = MLST_ST, y = ECC_80_10_10, fill = as.character(source_sig))) + fte_theme() +
-  geom_point(size = 3, shape = 21) + theme(axis.text.x  = element_text(angle=90, vjust = 0.5)) + 
-  geom_point(size = 3, shape = 24, aes(x = MLST_ST, y = ECC_10_80_10, fill = as.character(temp_sig))) +
-  geom_point(size = 3, shape = 23, aes(x = MLST_ST, y = ECC_50_30_20, fill = as.character(balanced_sig))) +
-  labs(y = "", title = '', x = 'MLST ST') + theme(legend.position = "none") +
-  scale_y_continuous(limit = c(0, 1)) + scale_fill_manual(values = c("0" = "grey50","1" = "#d95f02", "2" = "grey90", "3" = "#4dac26", "4" = "grey95", "5" = "#010101"))
-
-# Combine both plots into a single Figure: 
-mlst_multiplot <- grid.arrange(box_mlst, p_mlst, ncol = 2, widths = c(5, 15))
-
-
-```
 
 
 #### Descriptive Statistics for Subtype Clusters and ∆E: 
